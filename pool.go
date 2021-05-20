@@ -15,6 +15,8 @@ type Pool interface {
 
 	Close(interface{}) error
 
+	Connect() (interface{}, error)
+
 	Release()
 
 	Len() int

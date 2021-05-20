@@ -46,7 +46,7 @@ type channelPool struct {
 	idleTimeout, waitTimeOut time.Duration
 	maxActive                int
 	openingConns             int
-	connReqs                 []chan connReq
+	connQueue                []chan connReq
 }
 
 type idleConn struct {
@@ -132,7 +132,7 @@ func (c *channelPool) Get() (interface{}, error) {
 			log.Debugf("openConn %v %v", c.openingConns, c.maxActive)
 			if c.openingConns >= c.maxActive {
 				req := make(chan connReq, 1)
-				c.connReqs = append(c.connReqs, req)
+				c.connQueue = append(c.connQueue, req)
 				c.mu.Unlock()
 				ret, ok := <-req
 				if !ok {
@@ -163,6 +163,21 @@ func (c *channelPool) Get() (interface{}, error) {
 	}
 }
 
+func (c *channelPool) Connect() (interface{}, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.factory == nil {
+		return nil, ErrClosed
+	}
+	conn, err := c.factory()
+	if err != nil {
+		return nil, err
+	}
+	c.openingConns++
+	return conn, nil
+}
+
 // Put 将连接放回pool中
 func (c *channelPool) Put(conn interface{}) error {
 	if conn == nil {
@@ -176,10 +191,10 @@ func (c *channelPool) Put(conn interface{}) error {
 		return c.Close(conn)
 	}
 
-	if l := len(c.connReqs); l > 0 {
-		req := c.connReqs[0]
-		copy(c.connReqs, c.connReqs[1:])
-		c.connReqs = c.connReqs[:l-1]
+	if l := len(c.connQueue); l > 0 {
+		req := c.connQueue[0]
+		copy(c.connQueue, c.connQueue[1:])
+		c.connQueue = c.connQueue[:l-1]
 		req <- connReq{
 			idleConn: &idleConn{conn: conn, t: time.Now()},
 		}
